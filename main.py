@@ -6,7 +6,7 @@ app = FastAPI()
 
 @app.get("/")
 def home():
-    return {"message": "API PDF OK"}
+    return {"message": "API PDF go"}
 
 @app.post("/test-pdf")
 async def test_pdf(pdf: UploadFile = File(...)):
