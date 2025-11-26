@@ -14,52 +14,47 @@ async def extract_json(pdf: UploadFile = File(...)):
     content = await pdf.read()
     reader = PdfReader(io.BytesIO(content))
 
-    # Lecture complète du texte
+    # Texte complet
     text = ""
     for page in reader.pages:
         text += page.extract_text() or ""
 
     # =========================
-    # 1️⃣ DATE DU RAPPORT
+    # ✅ DATE DU RAPPORT
     # =========================
     date_match = re.search(
-        r"RAPPORT D['’]ARRIVAGE DU\s*:\s*(\d{2}/\d{2}/\d{4})",
-        text
+        r"RAPPORT\s+D['’]ARRIVAGE\s+DU\s*:\s*(\d{2}/\d{2}/\d{4})",
+        text,
+        re.IGNORECASE
     )
     date_doc = date_match.group(1) if date_match else None
 
     # =========================
-    # 2️⃣ EAN (13 chiffres dans le texte article)
+    # ✅ REGEX LIGNE ANOMALIE
     # =========================
-    eans = re.findall(r"\b\d{13}\b", text)
-
-    # =========================
-    # 3️⃣ Extraction anomalies
-    # =========================
-    pattern = (
-        r"(COLIS MANQUANT TOTAL-Missing|"
-        r"COLIS MANQUANT PARTIEL-Partiel Missing|"
-        r"R EMB|CASSE broken)"
-        r"\s+(AARMQT|AARMQP|AARRCA|AARAVA)"
-        r"\s+([A-Z0-9]+)"          # Expediteur
-        r"\s+(\d{10})"             # Bordereau
-        r"\s+(\d{8,12})"           # VIR
+    pattern = re.compile(
+        r"(AARMQT|AARMQP|AARRCA|AARAVA)\s+"
+        r"(COLIS MANQUANT TOTAL-Missing|COLIS MANQUANT PARTIEL-Partiel Missing|R EMB|CASSE broken)\s+"
+        r"([A-Z0-9]{8,10})\s+"        # ✅ Commande DO
+        r"(\d{9,12})\s+"              # ✅ Commande VIR
+        r"(\d{10})\s+"                # ✅ Bordereau
+        r"([A-Z0-9]+)\s+"             # ✅ Expéditeur
+        r"(\d{13})",                  # ✅ EAN
+        re.MULTILINE
     )
 
-    matches = re.findall(pattern, text)
+    matches = pattern.findall(text)
 
     resultats = []
 
-    for idx, m in enumerate(matches):
-        anomalie_text, code, expediteur, bordereau, vir = m
-
-        ean = eans[idx] if idx < len(eans) else None
+    for m in matches:
+        code, anomalie, commande_do, vir, bordereau, expediteur, ean = m
 
         resultats.append({
             "date": date_doc,
-            "commande_do": None,   # non disponible dans ce PDF
+            "commande_do": commande_do,
             "code": code,
-            "anomalie": anomalie_text,
+            "anomalie": anomalie,
             "expediteur": expediteur,
             "bordereau": bordereau,
             "vir": vir,
