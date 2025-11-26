@@ -14,72 +14,74 @@ async def extract_json(pdf: UploadFile = File(...)):
     content = await pdf.read()
     reader = PdfReader(io.BytesIO(content))
 
-    # --- Lire texte brut ---
+    # ===== 1. TEXTE BRUT =====
     text = ""
     for page in reader.pages:
         text += page.extract_text() or ""
 
-    # Nettoyage & découpage en lignes approximatives
-    raw_lines = re.split(r"\s{2,}", text)  # Deux espaces = changement logique
-    lines = [l.strip() for l in raw_lines if l.strip()]
+    # Normalisation des espaces
+    text_norm = re.sub(r"\s+", " ", text)
 
-    # --- Récupérer la date ---
-    date_match = re.search(r"ARRIVAGE DU\s*[: ]\s*(\d{2}/\d{2}/\d{4})", text)
+    # ===== 2. DATE =====
+    date_match = re.search(
+        r"ARRIVAGE DU\s*[: ]\s*(\d{2}/\d{2}/\d{4})",
+        text_norm
+    )
     date_doc = date_match.group(1) if date_match else None
 
-    # Codes cibles
-    codes = {"AARMQT", "AARMQP", "AARRCA", "AARAVA"}
-
-    # Dictionnaire anomalies
-    map_anomalie = {
-        "AARMQT": "COLIS MANQUANT TOTAL-Missing",
-        "AARMQP": "COLIS MANQUANT PARTIEL-Partiel Missing",
-        "AARRCA": "R EMB",
-        "AARAVA": "CASSE broken"
-    }
+    # ===== 3. TOUS LES CODES D'ANOMALIE =====
+    code_iter = re.finditer(r"(AARMQT|AARMQP|AARRCA|AARAVA)", text_norm)
 
     resultats = []
 
-    # --- Parcourir les lignes comme ton ancien script ---
-    for line in lines:
-        parts = line.split()
+    for match in code_iter:
+        code = match.group(1)
+        idx = match.start()
 
-        # Vérifier si un code est présent dans la ligne
-        for code in codes:
-            if code in parts:
-                idx = parts.index(code)
+        # --- Texte AVANT le code : pour DO + anomalie ---
+        pre = text_norm[max(0, idx - 120):idx]
 
-                # COMMANDES DO = la valeur juste avant le code
-                commande_do = parts[idx - 1] if idx >= 1 else None
+        # On cherche : [COMMANDE_DO] [LIBELLÉ ANOMALIE]
+        # ex : "IUDPFYSUI COLIS MANQUANT TOTAL-Missing"
+        do_anom = re.search(
+            r"([A-Z0-9]{8,12})\s+"
+            r"(COLIS MANQUANT TOTAL-Missing|"
+            r"COLIS MANQUANT PARTIEL-Partiel Missing|"
+            r"R EMB|CASSE broken)",
+            pre
+        )
 
-                anomalie = map_anomalie.get(code, "")
+        commande_do = do_anom.group(1) if do_anom else None
+        anomalie = do_anom.group(2) if do_anom else None
 
-                # EXPEDITEUR = juste après le code
-                expediteur = parts[idx + 1] if len(parts) > idx + 1 else None
+        # --- Texte APRÈS le code : expéditeur, bordereau, vir, ean ---
+        after = text_norm[idx:idx + 200]
+        after_parts = after.split()
 
-                # BORDEREAU = nombre à 10 chiffres
-                bord_match = re.search(r"\b\d{10}\b", line)
-                bordereau = bord_match.group(0) if bord_match else None
+        # expéditeur = mot juste après le code
+        expediteur = after_parts[1] if len(after_parts) > 1 else None
 
-                # VIR = nombre à 9 chiffres
-                vir_match = re.search(r"\b\d{9}\b", line)
-                vir = vir_match.group(0) if vir_match else None
+        # bordereau = 1er nombre à 10 chiffres après le code
+        bord_m = re.search(r"\b\d{10}\b", after)
+        bordereau = bord_m.group(0) if bord_m else None
 
-                # EAN = nombre à 13 chiffres
-                ean_match = re.search(r"\b\d{13}\b", line)
-                ean = ean_match.group(0) if ean_match else None
+        # vir = 1er nombre à 9 chiffres après le code
+        vir_m = re.search(r"\b\d{9}\b", after)
+        vir = vir_m.group(0) if vir_m else None
 
-                resultats.append({
-                    "date": date_doc,
-                    "commande_do": commande_do,
-                    "code": code,
-                    "anomalie": anomalie,
-                    "expediteur": expediteur,
-                    "bordereau": bordereau,
-                    "vir": vir,
-                    "ean": ean
-                })
+        # ean = 1er nombre à 13 chiffres après le code
+        ean_m = re.search(r"\b\d{13}\b", after)
+        ean = ean_m.group(0) if ean_m else None
 
-                break
+        resultats.append({
+            "date": date_doc,
+            "commande_do": commande_do,
+            "code": code,
+            "anomalie": anomalie,
+            "expediteur": expediteur,
+            "bordereau": bordereau,
+            "vir": vir,
+            "ean": ean,
+        })
 
     return {"resultats": resultats}
